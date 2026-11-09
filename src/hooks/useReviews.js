@@ -1,77 +1,58 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import reviewService from '../services/reviewService'
 
-// ---------------------------------------------------------------------------
-// useReviews — fetch reviews for a specific product.
-// ---------------------------------------------------------------------------
+// Cache review per produk: ['reviews', gunId]
+const reviewKey = (gunId) => ['reviews', String(gunId)]
 
+// ---------------------------------------------------------------------------
+// useReviews — review untuk satu produk (di-cache per produk).
+// ---------------------------------------------------------------------------
 export function useReviews(gunId) {
-  const [reviews, setReviews] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
-
-  const fetchReviews = useCallback(async () => {
-    if (!gunId) {
-      setLoading(false)
-      return
-    }
-    try {
-      setLoading(true)
-      setError(null)
-
+  const query = useQuery({
+    queryKey: reviewKey(gunId),
+    queryFn: async () => {
       const response = await reviewService.getReviews(gunId)
-
-      if (response.success) {
-        setReviews(response.data || [])
-      } else {
-        setError(response.message || 'Failed to fetch reviews.')
+      if (!response.success) {
+        throw new Error(response.message || 'Failed to fetch reviews.')
       }
-    } catch (err) {
-      setError(err.message || 'An error occurred while fetching reviews.')
-      setReviews([])
-    } finally {
-      setLoading(false)
-    }
-  }, [gunId])
+      return response.data || []
+    },
+    enabled: Boolean(gunId),
+  })
 
-  useEffect(() => {
-    fetchReviews()
-  }, [fetchReviews])
-
-  return { reviews, loading, error, refetch: fetchReviews }
+  return {
+    reviews: query.data ?? [],
+    loading: Boolean(gunId) && query.isPending,
+    error: query.error ? query.error.message : null,
+    refetch: query.refetch,
+  }
 }
 
 // ---------------------------------------------------------------------------
-// useCreateReview — submit a new review for a product.
+// useCreateReview — kirim review baru, lalu invalidate cache review produk
+// tsb supaya daftar langsung menampilkan review yang baru.
 // ---------------------------------------------------------------------------
-
 export function useCreateReview() {
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState(null)
-  const [success, setSuccess] = useState(false)
+  const queryClient = useQueryClient()
+  const mutation = useMutation({
+    mutationFn: ({ gunId, reviewData }) => reviewService.createReview(gunId, reviewData),
+    onSuccess: (_res, { gunId }) =>
+      queryClient.invalidateQueries({ queryKey: reviewKey(gunId) }),
+  })
 
   const createReview = async (gunId, reviewData) => {
     try {
-      setLoading(true)
-      setError(null)
-      setSuccess(false)
-
-      const response = await reviewService.createReview(gunId, reviewData)
-
-      if (response.success) {
-        setSuccess(true)
-        return response.data
-      } else {
-        setError(response.message || 'Failed to submit review.')
-        return null
-      }
-    } catch (err) {
-      setError(err.message || 'An error occurred while submitting review.')
+      const response = await mutation.mutateAsync({ gunId, reviewData })
+      return response.success ? response.data : null
+    } catch {
       return null
-    } finally {
-      setLoading(false)
     }
   }
 
-  return { createReview, loading, error, success }
+  return {
+    createReview,
+    loading: mutation.isPending,
+    error: mutation.error ? mutation.error.message : null,
+    success: mutation.isSuccess,
+  }
 }

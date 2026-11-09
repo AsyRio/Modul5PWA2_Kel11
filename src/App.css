@@ -1518,3 +1518,79 @@
     transform: translateY(0);
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * Pagination
+ * --------------------------------------------------------------------------- */
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 28px 0 8px;
+}
+
+.pagination__pages {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.pagination__gap {
+  color: var(--steel);
+  padding: 0 4px;
+}
+
+.pagination__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 38px;
+  height: 38px;
+  padding: 0 12px;
+  background: #fff;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.pagination__num {
+  padding: 0;
+}
+
+.pagination__btn:hover:not(:disabled) {
+  border-color: var(--brass);
+}
+
+.pagination__btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.pagination__btn--active,
+.pagination__btn--active:disabled {
+  background: var(--panel);
+  color: var(--panel-text);
+  border-color: var(--panel);
+  opacity: 1;
+}
+
+/* Grid meredup sebentar saat halaman berikutnya sedang diambil */
+.stock--fetching {
+  opacity: 0.6;
+  transition: opacity 0.15s ease;
+}
+
+/* Tombol Sharelink */
+.share-btn--done {
+  border-color: var(--brass);
+}

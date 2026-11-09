@@ -10,6 +10,7 @@ import {
   AlertCircle,
 } from 'lucide-react'
 import gunService from '../services/gunService'
+import { useUpdateGun } from '../hooks/useGuns'
 import uploadService from '../services/uploadService'
 import {
   saveDraft,
@@ -27,6 +28,7 @@ import ConfirmModal from '../components/modals/ConfirmModal'
  */
 export default function EditGunPage({ gun, gunId, onBack, onSuccess }) {
   const targetId = gunId || gun?.id
+  const { mutateAsync: updateGun } = useUpdateGun() // sukses → cache daftar di-refresh
 
   const [loading, setLoading] = useState(true)
   const [updating, setUpdating] = useState(false)
@@ -284,7 +286,7 @@ export default function EditGunPage({ gun, gunId, onBack, onSuccess }) {
 
     try {
       setUpdating(true)
-      const res = await gunService.updateGun(targetId, payload)
+      const res = await updateGun({ id: targetId, data: payload })
       if (res.success || res.data) {
         deleteDraft(targetId)
         if (onSuccess) {

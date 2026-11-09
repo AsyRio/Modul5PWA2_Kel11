@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import favoriteService from '../services/favoriteService'
 import { getUserIdentifier } from '../services/userService'
 
@@ -27,91 +27,84 @@ const writeLocalFavs = (ids) => {
 }
 
 // ---------------------------------------------------------------------------
-// useFavorites — list all favourited product IDs.
+// useFavorites — daftar favorit user ini.
 //
-// First attempts the server; on failure uses localStorage.
+// Di-cache dengan key ['favorites', userId]. Karena setiap FavoriteButton dan
+// Header memanggil hook ini, tanpa cache akan terjadi puluhan request yang
+// sama; dengan query cache semuanya berbagi SATU request (deduplikasi).
+// Bila server gagal, queryFn memakai localStorage sebagai cadangan.
 // ---------------------------------------------------------------------------
 
+const favKey = (userId) => ['favorites', userId]
+
 export function useFavorites() {
-  const [favorites, setFavorites] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
-  const [isLocal, setIsLocal] = useState(false)
   const userIdentifier = getUserIdentifier()
+  const queryClient = useQueryClient()
 
-  const fetchFavorites = useCallback(async () => {
-    try {
-      setLoading(true)
-      setError(null)
-
-      const response = await favoriteService.getFavorites(userIdentifier)
-
-      if (response.success) {
-        setFavorites(response.data || [])
-        setIsLocal(false)
-      } else {
-        throw new Error(response.message)
+  const query = useQuery({
+    queryKey: favKey(userIdentifier),
+    queryFn: async () => {
+      try {
+        const response = await favoriteService.getFavorites(userIdentifier)
+        if (!response.success) throw new Error(response.message)
+        return { items: response.data || [], isLocal: false }
+      } catch {
+        return { items: readLocalFavs(), isLocal: true }
       }
-    } catch {
-      // Fallback to localStorage
-      setFavorites(readLocalFavs())
-      setIsLocal(true)
-    } finally {
-      setLoading(false)
-    }
-  }, [userIdentifier])
+    },
+  })
 
-  useEffect(() => {
-    fetchFavorites()
-  }, [fetchFavorites])
-
-  return { favorites, loading, error, isLocal, refetch: fetchFavorites }
+  return {
+    favorites: query.data?.items ?? [],
+    loading: query.isPending,
+    error: null,
+    isLocal: query.data?.isLocal ?? false,
+    refetch: () => queryClient.invalidateQueries({ queryKey: favKey(userIdentifier) }),
+  }
 }
 
 // ---------------------------------------------------------------------------
-// useToggleFavorite — toggle a product in/out of favourites.
+// useToggleFavorite — tambah/hapus favorit; sukses → cache favorit di-refresh.
 // ---------------------------------------------------------------------------
 
 export function useToggleFavorite() {
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState(null)
   const userIdentifier = getUserIdentifier()
+  const queryClient = useQueryClient()
 
-  const toggleFavorite = async (gunId) => {
-    try {
-      setLoading(true)
-      setError(null)
+  const mutation = useMutation({
+    mutationFn: async (gunId) => {
+      try {
+        const response = await favoriteService.toggleFavorite({
+          recipe_id: gunId,
+          user_identifier: userIdentifier,
+        })
+        if (response.success) return response.data
+        throw new Error(response.message)
+      } catch {
+        // Cadangan: toggle di localStorage
+        const current = readLocalFavs()
+        const idx = current.findIndex((id) => String(id) === String(gunId))
+        let isFavorited
 
-      const response = await favoriteService.toggleFavorite({
-        recipe_id: gunId,
-        user_identifier: userIdentifier,
-      })
-
-      if (response.success) {
-        return response.data
+        if (idx === -1) {
+          current.push(gunId)
+          isFavorited = true
+        } else {
+          current.splice(idx, 1)
+          isFavorited = false
+        }
+        writeLocalFavs(current)
+        return { is_favorited: isFavorited }
       }
-      throw new Error(response.message)
-    } catch {
-      // Fallback: toggle in localStorage
-      const current = readLocalFavs()
-      const idx = current.findIndex((id) => String(id) === String(gunId))
-      let isFavorited
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: favKey(userIdentifier) }),
+  })
 
-      if (idx === -1) {
-        current.push(gunId)
-        isFavorited = true
-      } else {
-        current.splice(idx, 1)
-        isFavorited = false
-      }
-      writeLocalFavs(current)
-      return { is_favorited: isFavorited }
-    } finally {
-      setLoading(false)
-    }
+  return {
+    toggleFavorite: (gunId) => mutation.mutateAsync(gunId),
+    loading: mutation.isPending,
+    error: mutation.error ? mutation.error.message : null,
   }
-
-  return { toggleFavorite, loading, error }
 }
 
 // ---------------------------------------------------------------------------
@@ -119,8 +112,8 @@ export function useToggleFavorite() {
 // ---------------------------------------------------------------------------
 
 export function useIsFavorited(gunId) {
-  const { favorites, loading: fetchLoading, refetch } = useFavorites()
-  const { toggleFavorite: toggle, loading: toggleLoading } = useToggleFavorite()
+  const { favorites, loading: fetchLoading } = useFavorites()
+  const { toggleFavorite, loading: toggleLoading } = useToggleFavorite()
 
   // Check both server-format (objects with .id) and local-format (plain ids)
   const isFavorited = favorites.some((fav) => {
@@ -128,16 +121,10 @@ export function useIsFavorited(gunId) {
     return String(favId) === String(gunId)
   })
 
-  const toggleFavorite = async () => {
-    const result = await toggle(gunId)
-    if (result) await refetch()
-    return result
-  }
-
   return {
     isFavorited,
     loading: fetchLoading || toggleLoading,
-    toggleFavorite,
+    toggleFavorite: () => toggleFavorite(gunId),
   }
 }
 

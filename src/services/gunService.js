@@ -1,8 +1,8 @@
-import { apiClient, IS_SUPABASE } from '../config/api'
+import { apiClient } from '../config/api'
 
 // ---------------------------------------------------------------------------
-// Normalizer — standardizes product shape whether received from Supabase
-// (public.products) or from the university API (/api/v1/recipes).
+// Normalizer — menyeragamkan bentuk data produk dari tabel Supabase
+// `public.products` milik sendiri.
 // ---------------------------------------------------------------------------
 export const normalizeProduct = (item) => {
   if (!item) return null
@@ -55,155 +55,151 @@ export const normalizeProduct = (item) => {
 }
 
 // ---------------------------------------------------------------------------
-// GunService — wraps backend CRUD endpoints.
-// Supports both Supabase PostgREST table (/rest/v1/products) and
-// standard REST API (/api/v1/recipes).
+// GunService — CRUD ke tabel `products` di project Supabase milik sendiri
+// lewat REST API otomatis (PostgREST): /rest/v1/products.
 // ---------------------------------------------------------------------------
+
+// Batasi karakter yang punya arti khusus di filter PostgREST `or=(...)`.
+const sanitizeSearch = (q) => String(q).replace(/[,()*\\]/g, ' ').trim()
+
+// Header `Content-Range` berbentuk "0-5/23" (atau "*/0"): angka setelah "/"
+// adalah TOTAL baris yang cocok dengan filter, bukan hanya baris halaman ini.
+const parseTotal = (contentRange, fallback) => {
+  const total = Number(String(contentRange || '').split('/')[1])
+  return Number.isFinite(total) ? total : fallback
+}
+
+const toSpecsArray = (data, fallback) =>
+  Array.isArray(data.ingredients)
+    ? data.ingredients.map((i) => `${i.name}: ${i.quantity}`)
+    : Array.isArray(data.specs)
+    ? data.specs
+    : fallback
+
 class GunService {
   /**
-   * Fetch a paginated, filterable list of products.
+   * Ambil SATU HALAMAN produk (paginasi sisi-server) + filter/sort.
+   *
+   * params: { page = 1, limit = 6, search, category, sort_by, order }
+   *
+   * Paginasi memakai `limit` (jumlah baris) dan `offset` (baris yang dilewati)
+   * = (page - 1) * limit. Header `Prefer: count=exact` membuat Supabase
+   * mengirim total baris di `Content-Range`, dari sini totalPages dihitung.
    */
   async getGuns(params = {}) {
-    if (IS_SUPABASE) {
-      const queryParts = ['select=*']
+    const page = Math.max(1, Number(params.page) || 1)
+    const limit = Math.max(1, Number(params.limit) || 6)
 
-      if (params.search) {
-        queryParts.push(`name=ilike.*${encodeURIComponent(params.search)}*`)
-      }
-
-      if (params.category && params.category !== 'All') {
-        queryParts.push(`type=eq.${encodeURIComponent(params.category)}`)
-      }
-
-      if (params.sort_by) {
-        const order = params.order === 'desc' ? 'desc' : 'asc'
-        queryParts.push(`order=${encodeURIComponent(params.sort_by)}.${order}`)
-      } else {
-        queryParts.push('order=created_at.desc')
-      }
-
-      if (params.limit) {
-        queryParts.push(`limit=${params.limit}`)
-      }
-
-      const queryString = queryParts.join('&')
-      const data = await apiClient.get(`/rest/v1/products?${queryString}`)
-      const list = Array.isArray(data) ? data.map(normalizeProduct) : []
-
-      return {
-        success: true,
-        data: list,
-        pagination: {
-          total: list.length,
-          page: params.page || 1,
-          limit: params.limit || 50,
-        },
-      }
+    const query = {
+      select: '*',
+      limit,
+      offset: (page - 1) * limit,
+      // `id` sebagai pengurut kedua agar urutan stabil antar halaman.
+      order: params.sort_by
+        ? `${params.sort_by}.${params.order === 'desc' ? 'desc' : 'asc'},id.asc`
+        : 'created_at.desc,id.asc',
     }
 
-    // Fallback: university REST API
-    const clean = Object.fromEntries(
-      Object.entries(params).filter(([, v]) => v !== '' && v != null),
-    )
-    return apiClient.get('/api/v1/recipes', { params: clean })
+    const search = params.search ? sanitizeSearch(params.search) : ''
+    if (search) {
+      query.or = `(name.ilike.*${search}*,description.ilike.*${search}*)`
+    }
+    if (params.category && params.category !== 'All') {
+      query.type = `eq.${params.category}`
+    }
+
+    const { data, headers } = await apiClient.get('/rest/v1/products', {
+      params: query,
+      headers: { Prefer: 'count=exact' },
+      returnHeaders: true,
+    })
+
+    const list = Array.isArray(data) ? data.map(normalizeProduct) : []
+    const total = parseTotal(headers?.['content-range'], list.length)
+
+    return {
+      success: true,
+      data: list,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+      },
+    }
   }
 
   /**
-   * Fetch a single product by ID.
+   * Daftar kategori (kolom `type`) unik untuk filter pill.
+   */
+  async getCategories() {
+    const data = await apiClient.get('/rest/v1/products', {
+      params: { select: 'type' },
+    })
+    const set = new Set((Array.isArray(data) ? data : []).map((r) => r.type).filter(Boolean))
+    return ['All', ...Array.from(set).sort()]
+  }
+
+  /**
+   * Ambil satu produk berdasarkan ID (dipakai halaman detail & Sharelink).
    */
   async getGunById(id) {
-    if (IS_SUPABASE) {
-      const data = await apiClient.get(`/rest/v1/products?id=eq.${id}&select=*`)
-      if (Array.isArray(data) && data.length > 0) {
-        return { success: true, data: normalizeProduct(data[0]) }
-      }
-      throw new Error('Hardware item not found.')
+    const data = await apiClient.get('/rest/v1/products', {
+      params: { id: `eq.${id}`, select: '*' },
+    })
+    if (Array.isArray(data) && data.length > 0) {
+      return { success: true, data: normalizeProduct(data[0]) }
     }
-    return apiClient.get(`/api/v1/recipes/${id}`)
+    throw new Error('Hardware item not found.')
   }
 
-  /**
-   * Create a new product.
-   */
   async createGun(data) {
-    if (IS_SUPABASE) {
-      const specsArray = Array.isArray(data.ingredients)
-        ? data.ingredients.map((i) => `${i.name}: ${i.quantity}`)
-        : Array.isArray(data.specs)
-        ? data.specs
-        : []
-
-      const payload = {
-        name: data.name,
-        type: data.type || (data.category === 'minuman' ? 'Rifle' : 'Pistol'),
-        caliber: data.caliber || '9mm',
-        price: Number(data.price ?? data.cook_time ?? 0),
-        description: data.description || '',
-        specs: specsArray,
-        image_url: data.image_url || null,
-      }
-
-      const res = await apiClient.post('/rest/v1/products', payload, {
-        headers: { Prefer: 'return=representation' },
-      })
-      const created = Array.isArray(res) ? res[0] : res
-      return { success: true, data: normalizeProduct(created) }
+    const payload = {
+      name: data.name,
+      type: data.type || 'Pistol',
+      caliber: data.caliber || '9mm',
+      price: Number(data.price ?? data.cook_time ?? 0),
+      description: data.description || '',
+      specs: toSpecsArray(data, []),
+      image_url: data.image_url || null,
     }
-    return apiClient.post('/api/v1/recipes', data)
+
+    const res = await apiClient.post('/rest/v1/products', payload, {
+      headers: { Prefer: 'return=representation' },
+    })
+    const created = Array.isArray(res) ? res[0] : res
+    return { success: true, data: normalizeProduct(created) }
   }
 
-  /**
-   * Update existing product.
-   */
   async updateGun(id, data) {
-    if (IS_SUPABASE) {
-      const specsArray = Array.isArray(data.ingredients)
-        ? data.ingredients.map((i) => `${i.name}: ${i.quantity}`)
-        : Array.isArray(data.specs)
-        ? data.specs
-        : undefined
+    const specsArray = toSpecsArray(data, undefined)
+    const payload = { updated_at: new Date().toISOString() }
 
-      const payload = {
-        updated_at: new Date().toISOString(),
-      }
-      if (data.name !== undefined) payload.name = data.name
-      if (data.type !== undefined) payload.type = data.type
-      if (data.caliber !== undefined) payload.caliber = data.caliber
-      if (data.price !== undefined || data.cook_time !== undefined) {
-        payload.price = Number(data.price ?? data.cook_time ?? 0)
-      }
-      if (data.description !== undefined) payload.description = data.description
-      if (specsArray !== undefined) payload.specs = specsArray
-      if (data.image_url !== undefined) payload.image_url = data.image_url
-
-      const res = await apiClient.patch(`/rest/v1/products?id=eq.${id}`, payload, {
-        headers: { Prefer: 'return=representation' },
-      })
-      const updated = Array.isArray(res) ? res[0] : res
-      return { success: true, data: normalizeProduct(updated) }
+    if (data.name !== undefined) payload.name = data.name
+    if (data.type !== undefined) payload.type = data.type
+    if (data.caliber !== undefined) payload.caliber = data.caliber
+    if (data.price !== undefined || data.cook_time !== undefined) {
+      payload.price = Number(data.price ?? data.cook_time ?? 0)
     }
-    return apiClient.put(`/api/v1/recipes/${id}`, data)
+    if (data.description !== undefined) payload.description = data.description
+    if (specsArray !== undefined) payload.specs = specsArray
+    if (data.image_url !== undefined) payload.image_url = data.image_url
+
+    const res = await apiClient.patch('/rest/v1/products', payload, {
+      params: { id: `eq.${id}` },
+      headers: { Prefer: 'return=representation' },
+    })
+    const updated = Array.isArray(res) ? res[0] : res
+    return { success: true, data: normalizeProduct(updated) }
   }
 
-  /**
-   * Partial update (PATCH).
-   */
   async patchGun(id, data) {
-    if (IS_SUPABASE) {
-      return this.updateGun(id, data)
-    }
-    return apiClient.patch(`/api/v1/recipes/${id}`, data)
+    return this.updateGun(id, data)
   }
 
-  /**
-   * Delete product.
-   */
   async deleteGun(id) {
-    if (IS_SUPABASE) {
-      await apiClient.delete(`/rest/v1/products?id=eq.${id}`)
-      return { success: true }
-    }
-    return apiClient.delete(`/api/v1/recipes/${id}`)
+    await apiClient.delete('/rest/v1/products', { params: { id: `eq.${id}` } })
+    return { success: true }
   }
 }
 

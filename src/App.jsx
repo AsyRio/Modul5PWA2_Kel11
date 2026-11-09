@@ -1,19 +1,40 @@
-import { useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
+import { Loader } from 'lucide-react'
 import Header from './components/Header.jsx'
 import Footer from './components/Footer.jsx'
 import Catalog from './pages/Catalog.jsx'
-import FavoritesPage from './pages/FavoritesPage.jsx'
-import ProfilePage from './pages/ProfilePage.jsx'
-import CreateGunPage from './pages/CreateGunPage.jsx'
-import EditGunPage from './pages/EditGunPage.jsx'
-import GunDetail from './components/gun/GunDetail.jsx'
-import About from './pages/About.jsx'
-import Contact from './pages/Contact.jsx'
 import PWABadge from './components/PWABadge.jsx'
 import ConfirmModal from './components/modals/ConfirmModal.jsx'
 import SplashScreen from './components/common/SplashScreen.jsx'
-import gunService from './services/gunService.js'
+import { useDeleteGun } from './hooks/useGuns.js'
 import './App.css'
+
+// ---------------------------------------------------------------------------
+// LAZY LOADING (code splitting)
+//
+// Halaman selain Catalog (halaman pertama) tidak ikut di bundle awal. Dengan
+// React.lazy + import() dinamis, Vite memecahnya menjadi file JS terpisah
+// (chunk) yang baru diunduh saat halamannya pertama kali dibuka. Hasilnya
+// bundle awal lebih kecil → aplikasi tampil lebih cepat. Selama chunk
+// diunduh, <Suspense> menampilkan indikator loading (PageFallback).
+// Chunk yang sudah diunduh otomatis di-cache oleh browser & service worker PWA.
+// ---------------------------------------------------------------------------
+const FavoritesPage = lazy(() => import('./pages/FavoritesPage.jsx'))
+const ProfilePage = lazy(() => import('./pages/ProfilePage.jsx'))
+const CreateGunPage = lazy(() => import('./pages/CreateGunPage.jsx'))
+const EditGunPage = lazy(() => import('./pages/EditGunPage.jsx'))
+const GunDetail = lazy(() => import('./components/gun/GunDetail.jsx'))
+const About = lazy(() => import('./pages/About.jsx'))
+const Contact = lazy(() => import('./pages/Contact.jsx'))
+
+function PageFallback() {
+  return (
+    <div className="state-box" role="status">
+      <Loader size={28} className="spin" />
+      <p>Loading…</p>
+    </div>
+  )
+}
 
 function App() {
   const [showSplash, setShowSplash] = useState(true)
@@ -22,7 +43,7 @@ function App() {
   const [selectedGun, setSelectedGun] = useState(null)
   const [editingGun, setEditingGun] = useState(null)
   const [deleteTarget, setDeleteTarget] = useState(null)
-  const [deleting, setDeleting] = useState(false)
+  const { mutateAsync: deleteGun, isPending: deleting } = useDeleteGun()
 
   // Unified navigation handler
   const handleNavigate = (target, payload) => {
@@ -66,6 +87,7 @@ function App() {
       />
 
       <main className="main">
+        <Suspense fallback={<PageFallback />}>
         {/* Sub-page views */}
         {mode === 'create' && (
           <CreateGunPage
@@ -119,6 +141,7 @@ function App() {
             {tab === 'Contact' && <Contact />}
           </>
         )}
+        </Suspense>
       </main>
 
       {/* Global Delete Confirmation */}
@@ -132,15 +155,12 @@ function App() {
         onConfirm={async () => {
           if (!deleteTarget) return
           try {
-            setDeleting(true)
-            await gunService.deleteGun(deleteTarget.id)
+            await deleteGun(deleteTarget.id)
             setDeleteTarget(null)
             handleBackToList()
             setTab('Catalog')
           } catch (err) {
             alert(err.message || 'Failed to delete record.')
-          } finally {
-            setDeleting(false)
           }
         }}
         onCancel={() => setDeleteTarget(null)}

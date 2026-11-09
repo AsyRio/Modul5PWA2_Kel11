@@ -9,7 +9,7 @@ import {
   CheckCircle,
   AlertCircle,
 } from 'lucide-react'
-import gunService from '../services/gunService'
+import { useCreateGun } from '../hooks/useGuns'
 import uploadService from '../services/uploadService'
 import {
   saveDraft,
@@ -26,6 +26,7 @@ import ConfirmModal from '../components/modals/ConfirmModal'
  * draft persistence (auto-save), specs, and assembly steps.
  */
 export default function CreateGunPage({ onBack, onSuccess }) {
+  const { mutateAsync: createGun } = useCreateGun() // sukses → cache daftar di-refresh
   // Step state: 'upload' (upload or choose image) or 'form' (enter details)
   const [currentStep, setCurrentStep] = useState('upload')
 
@@ -273,7 +274,7 @@ export default function CreateGunPage({ onBack, onSuccess }) {
 
     try {
       setCreating(true)
-      const response = await gunService.createGun(payload)
+      const response = await createGun(payload)
       if (response.success || response.data) {
         deleteDraft('create')
         if (onSuccess) {

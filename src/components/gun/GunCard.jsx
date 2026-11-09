@@ -1,4 +1,5 @@
 import FavoriteButton from '../common/FavoriteButton'
+import ShareButton from '../common/ShareButton'
 import { formatPrice, truncate } from '../../utils/helpers'
 
 /**
@@ -50,6 +51,8 @@ export default function GunCard({ gun, onSelect, onEdit, onDelete }) {
       {/* Floating actions row */}
       <div className="card-actions">
         <FavoriteButton gunId={gun.id || gun.name} />
+        {/* Sharelink: salin / bagikan URL ?gun=<id> untuk item ini */}
+        <ShareButton gun={gun} />
 
         {onEdit && (
           <button

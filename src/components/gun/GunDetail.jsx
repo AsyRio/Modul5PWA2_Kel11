@@ -1,9 +1,11 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { ArrowLeft, Star, Send, Loader } from 'lucide-react'
 import FavoriteButton from '../common/FavoriteButton'
+import ShareButton from '../common/ShareButton'
 import { useReviews, useCreateReview } from '../../hooks/useReviews'
 import { getUserIdentifier } from '../../services/userService'
 import { formatPrice, averageRating } from '../../utils/helpers'
+import { isShareable, setShareParam } from '../../utils/shareLink'
 
 /**
  * Full-screen product detail view.
@@ -19,6 +21,15 @@ export default function GunDetail({ gun, onBack, onEdit, onDelete }) {
   const category = gun.type || gun.category || '—'
   const caliber = gun.caliber || gun.difficulty || ''
   const price = gun.price ?? gun.cook_time ?? 0
+
+  // Sharelink: selama halaman detail terbuka, address bar menampilkan
+  // ?gun=<id> sehingga URL yang sedang dilihat bisa langsung di-copy/bookmark.
+  // Saat komponen ditutup (Back), parameter dihapus kembali.
+  useEffect(() => {
+    if (!isShareable(gun)) return undefined
+    setShareParam(gun.id)
+    return () => setShareParam(null)
+  }, [gun])
 
   // Reviews
   const { reviews, loading: reviewsLoading, refetch: refetchReviews } = useReviews(gun.id)
@@ -84,6 +95,7 @@ export default function GunDetail({ gun, onBack, onEdit, onDelete }) {
 
           <div className="detail-actions">
             <FavoriteButton gunId={gun.id || gun.name} />
+            <ShareButton gun={gun} variant="full" />
             {onEdit && (
               <button type="button" className="btn btn--outline" onClick={() => onEdit(gun)}>
                 Edit
